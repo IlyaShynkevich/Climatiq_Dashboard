@@ -64,8 +64,3 @@ Expected behavior:
 - May should become the lowest-emission month
 - KPI cards should update automatically
 - Scenario cards should show different potential savings
-
-## Notes
-
-- This is a front-end prototype, not a production accounting tool.
-- Emission factors are placeholders and can be replaced with region-specific values later.
