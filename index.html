@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Climatiq Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Operational Carbon Snapshot</p>
+        <h1>Track business emissions without needing a full sustainability team.</h1>
+        <p class="hero-text">
+          Enter monthly electricity, gas, and travel activity, then compare baseline emissions
+          against simple reduction scenarios.
+        </p>
+      </div>
+      <section class="hero-card" aria-label="Current summary">
+        <p class="card-label">Current year estimate</p>
+        <div class="hero-metric" id="annualTotal">0 kg CO2e</div>
+        <p class="card-footnote" id="bestMonth">Lowest month: --</p>
+      </section>
+    </header>
+
+    <main class="dashboard">
+      <section class="panel panel-inputs">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Monthly Inputs</p>
+            <h2>Business activity data</h2>
+          </div>
+          <div class="panel-actions">
+            <label class="secondary-button upload-button" for="fileInput">Load CSV</label>
+            <input id="fileInput" type="file" accept=".csv" hidden>
+            <button id="clearDataBtn" class="secondary-button secondary-button-muted" type="button">Clear data</button>
+            <button id="addMonthBtn" class="secondary-button" type="button">Add month</button>
+          </div>
+        </div>
+        <p class="import-note">CSV columns: <code>month,electricity,gas,travel</code></p>
+        <p id="importStatus" class="import-status" aria-live="polite"></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Electricity (kWh)</th>
+                <th>Gas (therms)</th>
+                <th>Travel (mi)</th>
+                <th>Monthly emissions</th>
+                <th aria-label="Remove row"></th>
+              </tr>
+            </thead>
+            <tbody id="dataRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel panel-kpis">
+        <article class="stat-card">
+          <p>Total emissions</p>
+          <strong id="totalEmissions">0 kg</strong>
+          <span>Across all entered months</span>
+        </article>
+        <article class="stat-card">
+          <p>Highest source</p>
+          <strong id="topCategory">--</strong>
+          <span>Largest share of current footprint</span>
+        </article>
+        <article class="stat-card">
+          <p>Average per month</p>
+          <strong id="averageMonthly">0 kg</strong>
+          <span>Baseline monthly emissions</span>
+        </article>
+      </section>
+
+      <section class="panel panel-chart">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Trend</p>
+            <h2>Emissions over time</h2>
+          </div>
+        </div>
+        <div class="chart-card">
+          <canvas id="trendChart" width="900" height="320" aria-label="Emissions over time chart"></canvas>
+        </div>
+      </section>
+
+      <section class="panel panel-chart">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Mix</p>
+            <h2>Emissions by category</h2>
+          </div>
+        </div>
+        <div class="chart-card">
+          <canvas id="categoryChart" width="900" height="320" aria-label="Emissions by category chart"></canvas>
+        </div>
+      </section>
+
+      <section class="panel panel-scenarios">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">What-if Scenarios</p>
+            <h2>Reduction ideas</h2>
+          </div>
+        </div>
+        <div class="scenario-grid" id="scenarioGrid"></div>
+      </section>
+    </main>
+  </div>
+
+  <template id="rowTemplate">
+    <tr>
+      <td>
+        <input class="month-input" type="month">
+      </td>
+      <td>
+        <input class="metric-input" type="number" min="0" step="1" data-field="electricity">
+      </td>
+      <td>
+        <input class="metric-input" type="number" min="0" step="1" data-field="gas">
+      </td>
+      <td>
+        <input class="metric-input" type="number" min="0" step="1" data-field="travel">
+      </td>
+      <td class="row-total">0 kg CO2e</td>
+      <td>
+        <button class="icon-button remove-row" type="button" aria-label="Remove month">x</button>
+      </td>
+    </tr>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
