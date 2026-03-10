@@ -4,26 +4,56 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Climatiq Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="page-shell">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <img class="brand-mark" src="favicon.svg" alt="">
+        <div>
+          <p class="eyebrow">Climatiq-style concept</p>
+          <strong>Climatiq Dashboard</strong>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <span class="meta-pill">CSV ready</span>
+        <span class="meta-pill">Live scenarios</span>
+      </div>
+    </header>
+
     <header class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">Operational Carbon Snapshot</p>
-        <h1>Track business emissions without needing a full sustainability team.</h1>
+        <p class="eyebrow">Operational Carbon Intelligence</p>
+        <h1>Measure business activity and turn it into a carbon view you can actually use.</h1>
         <p class="hero-text">
-          Enter monthly electricity, gas, and travel activity, then compare baseline emissions
-          against simple reduction scenarios.
+          Load monthly electricity, gas, and travel data, review the emissions trend,
+          and compare quick reduction scenarios in one workspace.
         </p>
+        <div class="hero-pills">
+          <span class="meta-pill">Manual input</span>
+          <span class="meta-pill">CSV import</span>
+          <span class="meta-pill">What-if planning</span>
+        </div>
       </div>
       <section class="hero-card" aria-label="Current summary">
-        <p class="card-label">Current year estimate</p>
+        <p class="card-label">Portfolio emissions</p>
         <div class="hero-metric" id="annualTotal">0 kg CO2e</div>
         <p class="card-footnote" id="bestMonth">Lowest month: --</p>
+        <div class="hero-card-grid">
+          <div>
+            <span class="hero-card-label">Input mode</span>
+            <strong>Business activity</strong>
+          </div>
+          <div>
+            <span class="hero-card-label">Coverage</span>
+            <strong>Electricity, gas, travel</strong>
+          </div>
+        </div>
       </section>
     </header>
 
@@ -102,11 +132,28 @@
         </div>
       </section>
 
+      <section class="panel panel-forecast">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Predictions</p>
+            <h2>Projected next quarter</h2>
+          </div>
+        </div>
+        <div class="forecast-summary">
+          <article class="forecast-highlight">
+            <p>Projected 3-month total</p>
+            <strong id="forecastTotal">0 kg CO2e</strong>
+            <span id="forecastConfidence">Add at least two months to generate a forecast.</span>
+          </article>
+          <div class="forecast-list" id="forecastList"></div>
+        </div>
+      </section>
+
       <section class="panel panel-scenarios">
         <div class="panel-heading">
           <div>
             <p class="eyebrow">What-if Scenarios</p>
-            <h2>Reduction ideas</h2>
+            <h2>Recommended actions</h2>
           </div>
         </div>
         <div class="scenario-grid" id="scenarioGrid"></div>

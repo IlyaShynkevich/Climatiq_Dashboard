@@ -4,37 +4,6 @@ const EMISSION_FACTORS = {
   travel: 0.28,
 };
 
-const scenarioDefinitions = [
-  {
-    id: "green-electricity",
-    title: "Shift 20% to green energy",
-    description: "Reduce purchased-grid electricity emissions by one fifth.",
-    apply: (totals) => ({
-      ...totals,
-      electricity: totals.electricity * 0.8,
-    }),
-  },
-  {
-    id: "trim-travel",
-    title: "Cut travel by 15%",
-    description: "Swap some client trips for remote meetings and grouped visits.",
-    apply: (totals) => ({
-      ...totals,
-      travel: totals.travel * 0.85,
-    }),
-  },
-  {
-    id: "efficiency-package",
-    title: "Efficiency + heating tune-up",
-    description: "Reduce electricity by 10% and gas by 12% through efficiency work.",
-    apply: (totals) => ({
-      ...totals,
-      electricity: totals.electricity * 0.9,
-      gas: totals.gas * 0.88,
-    }),
-  },
-];
-
 const defaultRows = [
   { month: "", electricity: 0, gas: 0, travel: 0 },
 ];
@@ -56,6 +25,9 @@ const averageEl = document.getElementById("averageMonthly");
 const topCategoryEl = document.getElementById("topCategory");
 const annualTotalEl = document.getElementById("annualTotal");
 const bestMonthEl = document.getElementById("bestMonth");
+const forecastTotalEl = document.getElementById("forecastTotal");
+const forecastConfidenceEl = document.getElementById("forecastConfidence");
+const forecastListEl = document.getElementById("forecastList");
 
 const trendCanvas = document.getElementById("trendChart");
 const categoryCanvas = document.getElementById("categoryChart");
@@ -116,6 +88,25 @@ function createBlankRow(month = "") {
     gas: 0,
     travel: 0,
   };
+}
+
+function monthToDate(rawMonth) {
+  const [year, month] = rawMonth.split("-").map(Number);
+  return new Date(year, month - 1, 1);
+}
+
+function toMonthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function addMonths(rawMonth, offset) {
+  const nextDate = monthToDate(rawMonth);
+  nextDate.setMonth(nextDate.getMonth() + offset);
+  return toMonthKey(nextDate);
+}
+
+function clampReduction(value) {
+  return Math.min(100, Math.max(0, Number(value) || 0));
 }
 
 function parseCsv(text) {
@@ -181,6 +172,208 @@ function sumCategories(rows) {
   );
 }
 
+function getAverageDelta(values) {
+  if (values.length < 2) return 0;
+  let deltaSum = 0;
+  for (let index = 1; index < values.length; index += 1) {
+    deltaSum += values[index] - values[index - 1];
+  }
+  return deltaSum / (values.length - 1);
+}
+
+function getPredictionInputs(rows, field) {
+  const values = rows
+    .map((row) => Number(row[field] || 0))
+    .filter((value) => Number.isFinite(value));
+  const recentValues = values.slice(-6);
+  const latestValue = recentValues[recentValues.length - 1] || 0;
+  const averageValue = recentValues.length
+    ? recentValues.reduce((sum, value) => sum + value, 0) / recentValues.length
+    : 0;
+  return {
+    latestValue,
+    averageValue,
+    averageDelta: getAverageDelta(recentValues),
+  };
+}
+
+function generateForecastRows(rows, horizon = 3) {
+  const datedRows = rows
+    .filter((row) => row.month)
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  if (datedRows.length === 0) {
+    return [];
+  }
+
+  const baseMonth = datedRows[datedRows.length - 1].month;
+  const electricityInput = getPredictionInputs(datedRows, "electricity");
+  const gasInput = getPredictionInputs(datedRows, "gas");
+  const travelInput = getPredictionInputs(datedRows, "travel");
+
+  return Array.from({ length: horizon }, (_, index) => {
+    const step = index + 1;
+    const month = addMonths(baseMonth, step);
+    const electricity = Math.max(0, electricityInput.latestValue + electricityInput.averageDelta * step);
+    const gas = Math.max(0, gasInput.latestValue + gasInput.averageDelta * step);
+    const travel = Math.max(0, travelInput.latestValue + travelInput.averageDelta * step);
+    const normalizedRow = {
+      month,
+      electricity: electricityInput.averageValue > 0 ? electricity : 0,
+      gas: gasInput.averageValue > 0 ? gas : 0,
+      travel: travelInput.averageValue > 0 ? travel : 0,
+    };
+    const breakdown = calculateRowEmissions(normalizedRow);
+    return {
+      ...normalizedRow,
+      breakdown,
+      total: breakdown.electricity + breakdown.gas + breakdown.travel,
+    };
+  });
+}
+
+function applyScenarioToBreakdown(breakdown, scenario) {
+  return {
+    electricity: breakdown.electricity * (1 - clampReduction(scenario.electricityReduction) / 100),
+    gas: breakdown.gas * (1 - clampReduction(scenario.gasReduction) / 100),
+    travel: breakdown.travel * (1 - clampReduction(scenario.travelReduction) / 100),
+  };
+}
+
+function buildScenarioForecast(forecastRows, scenario) {
+  return forecastRows.map((row) => {
+    const adjustedBreakdown = applyScenarioToBreakdown(row.breakdown, scenario);
+    return {
+      ...row,
+      adjustedBreakdown,
+      adjustedTotal: adjustedBreakdown.electricity + adjustedBreakdown.gas + adjustedBreakdown.travel,
+    };
+  });
+}
+
+function average(values) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function getCategoryShare(value, total) {
+  return total > 0 ? value / total : 0;
+}
+
+function analyzeDataset(computedRows) {
+  const datedRows = computedRows.filter((row) => row.month).sort((a, b) => a.month.localeCompare(b.month));
+  const totals = sumCategories(datedRows);
+  const totalEmissions = totals.electricity + totals.gas + totals.travel;
+  const entries = [
+    { key: "electricity", label: "Electricity", value: totals.electricity },
+    { key: "gas", label: "Gas", value: totals.gas },
+    { key: "travel", label: "Travel", value: totals.travel },
+  ].sort((a, b) => b.value - a.value);
+
+  const rowCount = datedRows.length;
+  const midpoint = Math.max(1, Math.floor(rowCount / 2));
+  const firstHalf = datedRows.slice(0, midpoint);
+  const secondHalf = datedRows.slice(midpoint);
+  const firstHalfTravel = average(firstHalf.map((row) => row.breakdown.travel));
+  const secondHalfTravel = average(secondHalf.map((row) => row.breakdown.travel));
+  const firstHalfElectricity = average(firstHalf.map((row) => row.breakdown.electricity));
+  const secondHalfElectricity = average(secondHalf.map((row) => row.breakdown.electricity));
+
+  const winterRows = datedRows.filter((row) => ["12", "01", "02"].includes((row.month || "").split("-")[1]));
+  const nonWinterRows = datedRows.filter((row) => !["12", "01", "02"].includes((row.month || "").split("-")[1]));
+  const winterGas = average(winterRows.map((row) => row.breakdown.gas));
+  const nonWinterGas = average(nonWinterRows.map((row) => row.breakdown.gas));
+
+  return {
+    rowCount,
+    totals,
+    totalEmissions,
+    dominant: entries[0] || { key: "", label: "", value: 0 },
+    secondLargest: entries[1] || { key: "", label: "", value: 0 },
+    electricityShare: getCategoryShare(totals.electricity, totalEmissions),
+    gasShare: getCategoryShare(totals.gas, totalEmissions),
+    travelShare: getCategoryShare(totals.travel, totalEmissions),
+    travelGrowthRatio: firstHalfTravel > 0 ? secondHalfTravel / firstHalfTravel : 1,
+    electricityGrowthRatio: firstHalfElectricity > 0 ? secondHalfElectricity / firstHalfElectricity : 1,
+    winterGasRatio: nonWinterGas > 0 ? winterGas / nonWinterGas : 1,
+  };
+}
+
+function createRecommendedScenarios(computedRows) {
+  const analysis = analyzeDataset(computedRows);
+  const recommendations = [];
+
+  if (analysis.rowCount < 2 || analysis.totalEmissions === 0) {
+    return recommendations;
+  }
+
+  if (analysis.electricityShare >= 0.38 || analysis.dominant.key === "electricity") {
+    recommendations.push({
+      id: "recommended-electricity",
+      name: "Electricity procurement shift",
+      note: "Power is a leading driver in this dataset, so procurement and efficiency changes are the fastest lever.",
+      reasonTitle: "Why this fits this dataset",
+      reason: `Electricity contributes ${Math.round(analysis.electricityShare * 100)}% of total emissions, making it the largest opportunity.`,
+      score: "High fit",
+      electricityReduction: analysis.electricityShare >= 0.5 ? 18 : 12,
+      gasReduction: 0,
+      travelReduction: 0,
+    });
+  }
+
+  if (analysis.winterGasRatio >= 1.25 || analysis.dominant.key === "gas") {
+    recommendations.push({
+      id: "recommended-gas",
+      name: "Heating and controls tune-up",
+      note: "Gas emissions rise materially in colder months, so seasonal efficiency work should pay back here.",
+      reasonTitle: "Why this fits this dataset",
+      reason: `Winter gas emissions are about ${Math.round((analysis.winterGasRatio - 1) * 100)}% higher than non-winter levels.`,
+      score: "Seasonal fit",
+      electricityReduction: 6,
+      gasReduction: analysis.gasShare >= 0.4 ? 15 : 10,
+      travelReduction: 0,
+    });
+  }
+
+  if (analysis.travelShare >= 0.28 || analysis.travelGrowthRatio >= 1.15) {
+    recommendations.push({
+      id: "recommended-travel",
+      name: "Travel policy optimization",
+      note: "Travel is either growing or already material, so trip consolidation should reduce forecast pressure.",
+      reasonTitle: "Why this fits this dataset",
+      reason: analysis.travelGrowthRatio >= 1.15
+        ? `Travel emissions in the later period are about ${Math.round((analysis.travelGrowthRatio - 1) * 100)}% higher than the earlier period.`
+        : `Travel contributes ${Math.round(analysis.travelShare * 100)}% of total emissions, which is large enough to target directly.`,
+      score: "Growth fit",
+      electricityReduction: 0,
+      gasReduction: 0,
+      travelReduction: analysis.travelGrowthRatio >= 1.25 ? 18 : 12,
+    });
+  }
+
+  if (recommendations.length < 3) {
+    recommendations.push({
+      id: "recommended-mixed",
+      name: "Balanced operating efficiency",
+      note: "No single category fully dominates, so a blended plan spreads the reduction effort across operations.",
+      reasonTitle: "Why this fits this dataset",
+      reason: `${analysis.dominant.label} leads, but the footprint is still distributed enough to justify a mixed intervention package.`,
+      score: "Balanced fit",
+      electricityReduction: 8,
+      gasReduction: 8,
+      travelReduction: 8,
+    });
+  }
+
+  return recommendations.slice(0, 3);
+}
+
+function describeForecastConfidence(rowCount) {
+  if (rowCount >= 12) return "Forecast uses the last 6 months of directional change. Confidence: medium.";
+  if (rowCount >= 6) return "Forecast uses recent monthly trend, but the history window is still short. Confidence: low-medium.";
+  if (rowCount >= 2) return "Forecast is directional only because the dataset is limited. Confidence: low.";
+  return "Add at least two months to generate a forecast.";
+}
+
 function renderRows(computedRows = getComputedRows()) {
   dataRows.innerHTML = "";
 
@@ -201,9 +394,21 @@ function renderRows(computedRows = getComputedRows()) {
     metricInputs.forEach((input) => {
       const field = input.dataset.field;
       input.value = row[field];
+      input.addEventListener("focus", (event) => {
+        if (Number(event.target.value) === 0) {
+          event.target.value = "";
+        }
+      });
       input.addEventListener("input", (event) => {
         state.rows[index][field] = Number(event.target.value) || 0;
         updateDashboard();
+      });
+      input.addEventListener("blur", (event) => {
+        if (event.target.value === "") {
+          event.target.value = "0";
+          state.rows[index][field] = 0;
+          updateDashboard();
+        }
       });
     });
 
@@ -297,7 +502,7 @@ function drawTrendChart(computedRows) {
   ctx.lineTo(width - padding.right, height - padding.bottom);
   ctx.stroke();
 
-  ctx.font = "13px Space Grotesk";
+  ctx.font = '600 13px "Manrope", sans-serif';
   ctx.fillStyle = "#4d4136";
 
   for (let tick = 0; tick <= yTicks; tick += 1) {
@@ -315,14 +520,14 @@ function drawTrendChart(computedRows) {
   if (computedRows.every((row) => row.total === 0)) {
     ctx.fillStyle = "#6e6256";
     ctx.textAlign = "center";
-    ctx.font = "15px Space Grotesk";
+    ctx.font = '600 15px "Manrope", sans-serif';
     ctx.fillText("Enter monthly data to see the emissions trend.", width / 2, height / 2);
     return;
   }
 
   const stepX = computedRows.length > 1 ? chartWidth / (computedRows.length - 1) : 0;
 
-  ctx.strokeStyle = "#1e6b52";
+  ctx.strokeStyle = "#5b57f2";
   ctx.lineWidth = 4;
   ctx.beginPath();
 
@@ -339,7 +544,7 @@ function drawTrendChart(computedRows) {
     const x = padding.left + stepX * index;
     const y = height - padding.bottom - (row.total / maxValue) * chartHeight;
     ctx.fillStyle = "#fffaf3";
-    ctx.strokeStyle = "#1e6b52";
+    ctx.strokeStyle = "#5b57f2";
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(x, y, 6, 0, Math.PI * 2);
@@ -347,7 +552,7 @@ function drawTrendChart(computedRows) {
     ctx.stroke();
 
     ctx.fillStyle = "#4d4136";
-    ctx.font = "12px Space Grotesk";
+    ctx.font = '600 13px "Manrope", sans-serif';
     ctx.textAlign = "center";
     ctx.fillText(formatMonthShort(row.month), x, height - 52);
   });
@@ -376,7 +581,7 @@ function drawTrendChart(computedRows) {
     ctx.stroke();
 
     ctx.fillStyle = "#4d4136";
-    ctx.font = "12px Space Grotesk";
+    ctx.font = '700 13px "Manrope", sans-serif';
     ctx.textAlign = "center";
     ctx.fillText(segment.year || "--", (startX + endX) / 2, labelY);
   });
@@ -387,9 +592,9 @@ function drawCategoryChart(computedRows) {
   const padding = 56;
   const totals = sumCategories(computedRows);
   const entries = [
-    ["Electricity", totals.electricity, "#1e6b52"],
-    ["Gas", totals.gas, "#d87d4d"],
-    ["Travel", totals.travel, "#d4b15a"],
+    ["Electricity", totals.electricity, "#5b57f2"],
+    ["Gas", totals.gas, "#1d1cf4"],
+    ["Travel", totals.travel, "#b6b8ff"],
   ];
   const maxValue = Math.max(...entries.map((entry) => entry[1]), 1);
 
@@ -399,7 +604,7 @@ function drawCategoryChart(computedRows) {
   if (entries.every((entry) => entry[1] === 0)) {
     ctx.fillStyle = "#6e6256";
     ctx.textAlign = "center";
-    ctx.font = "15px Space Grotesk";
+    ctx.font = '600 15px "Manrope", sans-serif';
     ctx.fillText("Category totals will appear once you enter data.", width / 2, height / 2);
     return;
   }
@@ -418,39 +623,110 @@ function drawCategoryChart(computedRows) {
     ctx.fillRect(x, y, barWidth, barHeight);
 
     ctx.fillStyle = "#29211b";
-    ctx.font = "13px Space Grotesk";
+    ctx.font = '600 13px "Manrope", sans-serif';
     ctx.textAlign = "center";
     ctx.fillText(label, x + barWidth / 2, height - 24);
+    ctx.font = '700 13px "Manrope", sans-serif';
     ctx.fillText(`${Math.round(value)} kg`, x + barWidth / 2, y - 10);
   });
 }
 
-function renderScenarios(computedRows) {
+function renderScenarios(computedRows, forecastRows = []) {
   const totals = sumCategories(computedRows);
   const baselineTotal = totals.electricity + totals.gas + totals.travel;
+  const baselineForecastTotal = forecastRows.reduce((sum, row) => sum + row.total, 0);
+  const recommendedScenarios = createRecommendedScenarios(computedRows);
   scenarioGrid.innerHTML = "";
 
-  scenarioDefinitions.forEach((scenario) => {
-    const adjusted = scenario.apply(totals);
-    const scenarioTotal = adjusted.electricity + adjusted.gas + adjusted.travel;
-    const savings = baselineTotal - scenarioTotal;
+  if (recommendedScenarios.length === 0) {
+    const emptyState = document.createElement("article");
+    emptyState.className = "scenario-empty";
+    emptyState.textContent = "Load at least two dated months with real emissions activity to generate dataset-specific recommendations.";
+    scenarioGrid.appendChild(emptyState);
+    return;
+  }
+
+  recommendedScenarios.forEach((scenario, index) => {
+    const adjustedCurrent = applyScenarioToBreakdown(totals, scenario);
+    const currentScenarioTotal = adjustedCurrent.electricity + adjustedCurrent.gas + adjustedCurrent.travel;
+    const currentSavings = baselineTotal - currentScenarioTotal;
+    const scenarioForecastRows = buildScenarioForecast(forecastRows, scenario);
+    const scenarioForecastTotal = scenarioForecastRows.reduce((sum, row) => sum + row.adjustedTotal, 0);
+    const forecastSavings = baselineForecastTotal - scenarioForecastTotal;
+    const scenarioMonths = scenarioForecastRows
+      .map((row) => `
+        <div class="scenario-forecast-row">
+          <span>${formatMonth(row.month)}</span>
+          <strong>${Math.round(row.adjustedTotal).toLocaleString()} kg</strong>
+        </div>
+      `)
+      .join("");
     const card = document.createElement("article");
     card.className = "scenario-card";
-    const scenarioLabel = scenario.id.split("-").join(" ");
     card.innerHTML = `
       <div class="scenario-copy">
-        <p>${scenarioLabel}</p>
-        <h3>${scenario.title}</h3>
-        <p>${scenario.description}</p>
+        <p class="scenario-kicker">Recommendation ${index + 1}</p>
+        <h3>${scenario.name}</h3>
+        <p>${scenario.note}</p>
+      </div>
+      <div class="scenario-score">${scenario.score}</div>
+      <div class="scenario-why">
+        <strong>${scenario.reasonTitle}</strong>
+        <p>${scenario.reason}</p>
       </div>
       <div>
-        <p class="scenario-metric">${Math.round(savings).toLocaleString()} kg</p>
-        <p>${Math.round((savings / Math.max(baselineTotal, 1)) * 100)}% reduction vs baseline</p>
+        <p class="scenario-metric">${Math.round(currentSavings).toLocaleString()} kg</p>
+        <p>${Math.round((currentSavings / Math.max(baselineTotal, 1)) * 100)}% reduction vs current baseline</p>
       </div>
-      <button type="button">New total: ${Math.round(scenarioTotal).toLocaleString()} kg</button>
+      <p class="scenario-case-study">Projected quarter impact: ${Math.round(forecastSavings).toLocaleString()} kg below the baseline forecast.</p>
+      <div class="scenario-meta">
+        <span class="scenario-total">Current total: ${Math.round(currentScenarioTotal).toLocaleString()} kg</span>
+        <span class="scenario-total">Projected 3-month total: ${Math.round(scenarioForecastTotal).toLocaleString()} kg</span>
+      </div>
+      <ul class="scenario-points">
+        <li>Electricity cut: ${scenario.electricityReduction}%</li>
+        <li>Gas cut: ${scenario.gasReduction}%</li>
+        <li>Travel cut: ${scenario.travelReduction}%</li>
+      </ul>
+      <div class="scenario-forecast-list">${scenarioMonths || '<div class="scenario-forecast-row"><span>No forecast yet</span><strong>--</strong></div>'}</div>
     `;
     scenarioGrid.appendChild(card);
   });
+}
+
+function renderForecast(computedRows) {
+  const validRows = computedRows.filter((row) => row.month);
+  const forecastRows = validRows.length >= 2 ? generateForecastRows(state.rows, 3) : [];
+  const forecastTotal = forecastRows.reduce((sum, row) => sum + row.total, 0);
+
+  forecastTotalEl.textContent = formatKg(forecastTotal);
+  forecastConfidenceEl.textContent = describeForecastConfidence(validRows.length);
+  forecastListEl.innerHTML = "";
+
+  if (forecastRows.length === 0) {
+    const emptyCard = document.createElement("article");
+    emptyCard.className = "forecast-card";
+    emptyCard.innerHTML = `
+      <p>Forecast unavailable</p>
+      <strong>--</strong>
+      <span>Enter at least two dated months to project the next quarter.</span>
+    `;
+    forecastListEl.appendChild(emptyCard);
+    return;
+  }
+
+  forecastRows.forEach((row) => {
+    const card = document.createElement("article");
+    card.className = "forecast-card";
+    card.innerHTML = `
+      <p>${formatMonth(row.month)}</p>
+      <strong>${Math.round(row.total).toLocaleString()} kg</strong>
+      <span>Electricity ${Math.round(row.breakdown.electricity)} kg, gas ${Math.round(row.breakdown.gas)} kg, travel ${Math.round(row.breakdown.travel)} kg.</span>
+    `;
+    forecastListEl.appendChild(card);
+  });
+
+  return forecastRows;
 }
 
 function updateDashboard() {
@@ -460,7 +736,8 @@ function updateDashboard() {
   renderSummary(sortedRows);
   drawTrendChart(sortedRows);
   drawCategoryChart(sortedRows);
-  renderScenarios(sortedRows);
+  const forecastRows = renderForecast(sortedRows);
+  renderScenarios(sortedRows, forecastRows);
 }
 
 function render() {

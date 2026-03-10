@@ -1,21 +1,23 @@
 # Climatiq Dashboard
 
-Climatiq Dashboard is a small static web app for tracking a business's monthly operational emissions. It lets a user enter electricity, gas, and travel activity, then shows the resulting emissions with simple summary cards, charts, and reduction scenarios.
+Climatiq Dashboard is a static web app for exploring a business's monthly operational emissions. It converts electricity, gas, and travel activity into emissions, summarizes the footprint, projects the next quarter, and recommends dataset-specific reduction actions.
 
 ## Features
 
-- Monthly data entry for electricity, gas, and travel
+- Manual monthly data entry for electricity, gas, and travel
+- CSV import with validation for `month,electricity,gas,travel`
 - Automatic emissions calculation for each month
-- Summary KPI cards for total emissions, average emissions, and top category
-- Trend chart showing emissions over time
-- Category chart showing emissions split by source
-- "What-if" scenario cards for simple reduction ideas
+- Summary KPI cards for total emissions, average monthly emissions, and highest source
+- Trend and category charts for historical emissions
+- Baseline forecast for the next 3 months
+- Dataset-driven recommendation cards with projected scenario impacts
 
 ## Project Structure
 
 - `index.html` - page structure and dashboard layout
 - `styles.css` - dashboard styling and responsive layout
-- `app.js` - emissions logic, chart drawing, and interaction handling
+- `app.js` - emissions logic, forecasting, recommendations, and interaction handling
+- `Samples/` - example CSV inputs for testing outside the main dashboard UI
 
 ## How To Run
 
@@ -41,26 +43,22 @@ http://localhost:8000
 
 ## How It Works
 
-1. Enter monthly activity data in the table.
-2. Emissions are calculated with simple fixed factors in `app.js`:
+1. Enter monthly activity data manually or import a CSV file.
+2. Emissions are calculated with fixed factors in `app.js`:
    - Electricity: `0.4 kg CO2e` per `kWh`
    - Gas: `5.3 kg CO2e` per `therm`
    - Travel: `0.28 kg CO2e` per `mile`
-3. The dashboard updates summary cards, charts, and scenarios immediately.
+3. The dashboard updates KPI cards and historical charts immediately.
+4. The forecast module projects the next 3 months using recent directional change in the loaded dataset.
+5. The recommendation module analyzes the dataset and proposes actions based on dominant sources, growth patterns, and seasonal gas behavior.
 
-## Demo Scenario
+## Current Recommendation Logic
 
-Try this sample set of values:
+The recommendation cards are dataset-driven, but heuristic-based rather than machine-learned. The app currently looks for:
 
-- January 2026: Electricity `2200`, Gas `130`, Travel `500`
-- February 2026: Electricity `1800`, Gas `110`, Travel `450`
-- March 2026: Electricity `2400`, Gas `100`, Travel `900`
-- April 2026: Electricity `1500`, Gas `70`, Travel `200`
-- May 2026: Electricity `300`, Gas `10`, Travel `25`
+- electricity-heavy footprints
+- winter gas spikes
+- rising or material travel emissions
+- mixed-source footprints that need a balanced action package
 
-Expected behavior:
-
-- March should appear as one of the highest-emission months
-- May should become the lowest-emission month
-- KPI cards should update automatically
-- Scenario cards should show different potential savings
+Each recommendation also includes a projected 3-month scenario outcome so it can be compared with the baseline forecast.
