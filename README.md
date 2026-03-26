@@ -1,35 +1,88 @@
 # Climatiq Dashboard
 
-Climatiq Dashboard is a static web app for exploring a business's monthly operational emissions. It converts electricity, gas, and travel activity into emissions, summarizes the footprint, projects the next quarter, and recommends dataset-specific reduction actions.
+Climatiq Dashboard is a static browser app for exploring monthly operational emissions. It converts electricity, gas, and travel activity into `kg CO2e`, visualizes the footprint, benchmarks multiple forecast models, projects the next quarter, and recommends reduction scenarios based on the uploaded dataset.
 
-## Features
+## What The Dashboard Does
 
-- Manual monthly data entry for electricity, gas, and travel
-- CSV import with validation for `month,electricity,gas,travel`
-- Automatic emissions calculation for each month
-- Summary KPI cards for total emissions, average monthly emissions, and highest source
-- Trend and category charts for historical emissions
-- Baseline forecast for the next 3 months
-- Dataset-driven recommendation cards with projected scenario impacts
+- captures monthly business activity through manual entry or CSV import
+- converts activity into emissions with fixed factors for electricity, gas, and travel
+- summarizes the footprint with KPI cards and two canvas charts
+- benchmarks several forecasting approaches and selects the best available model
+- projects the next 3 months of emissions
+- generates scenario cards with current-baseline savings and forecast-baseline savings
 
-## Project Structure
+## Forecasting Behavior
 
-- `index.html` - page structure and dashboard layout
-- `styles.css` - dashboard styling and responsive layout
-- `app.js` - emissions logic, forecasting, recommendations, and interaction handling
-- `Samples/` - example CSV inputs for testing outside the main dashboard UI
+The forecast panel changes based on how much dated history is available:
 
-## How To Run
+- Fewer than `12` months: forecasting is locked because there is not enough history to infer seasonality.
+- `12` to `23` months: the app uses a seasonal-naive fallback that repeats the last full year.
+- `24+` months: the app runs a rolling one-step benchmark and compares `Mean`, `Naive`, `Seasonal naive`, `Holt-Winters`, and `Prophet-style` models using `RMSE`, `MAE`, and `MAPE`.
 
-This project has no build step and no dependencies.
+The winning model is then refit on the full dataset and used to forecast the next quarter.
 
-### Option 1: Open directly
+## Recommendation Logic
 
-Open `index.html` in your browser.
+Recommendations are heuristic-based, not machine-learned. The app looks for:
 
-### Option 2: Run a local server
+- electricity-heavy footprints
+- winter gas spikes
+- rising or material travel emissions
+- mixed-source footprints that benefit from a balanced intervention plan
 
-From the project folder:
+Each recommendation applies category-specific reduction percentages and compares the result against both the current footprint and, when available, the selected 3-month forecast baseline.
+
+## Emission Factors
+
+The current conversion factors in [`app.js`](/c:/University/Projects/Climatiq/app.js) are:
+
+- Electricity: `0.4 kg CO2e` per `kWh`
+- Gas: `5.3 kg CO2e` per `therm`
+- Travel: `0.28 kg CO2e` per `mile`
+
+## CSV Format
+
+The importer expects this header exactly:
+
+```csv
+month,electricity,gas,travel
+2025-01,1200,90,450
+2025-02,1100,105,420
+```
+
+Rules:
+
+- `month` must use `YYYY-MM`
+- activity values must be numeric
+- negative values are rejected
+- blank numeric fields are treated as `0`
+
+## Sample Data
+
+Example datasets are provided in [`Samples/`](/c:/University/Projects/Climatiq/Samples):
+
+- `sample.csv`
+- `sample_two_years.csv`
+- `sample_growth.csv`
+- `sample_winter_heating.csv`
+- `sample_travel_heavy.csv`
+- `sample_spiky_operations.csv`
+- `sample_retrofit.csv`
+- `sample_remote_low_footprint.csv`
+
+Use `sample_two_years.csv` if you want to unlock the full forecast benchmark immediately.
+
+## Run Locally
+
+This project has no build step and no package dependencies.
+
+### Option 1: Open Directly
+
+Open [`index.html`](/c:/University/Projects/Climatiq/index.html) in a browser.
+
+### Option 2: Use a Local Server
+
+From the project directory:
 
 ```powershell
 python -m http.server 8000
@@ -41,24 +94,15 @@ Then open:
 http://localhost:8000
 ```
 
-## How It Works
+## Project Structure
 
-1. Enter monthly activity data manually or import a CSV file.
-2. Emissions are calculated with fixed factors in `app.js`:
-   - Electricity: `0.4 kg CO2e` per `kWh`
-   - Gas: `5.3 kg CO2e` per `therm`
-   - Travel: `0.28 kg CO2e` per `mile`
-3. The dashboard updates KPI cards and historical charts immediately.
-4. The forecast module projects the next 3 months using recent directional change in the loaded dataset.
-5. The recommendation module analyzes the dataset and proposes actions based on dominant sources, growth patterns, and seasonal gas behavior.
+- [`index.html`](/c:/University/Projects/Climatiq/index.html): dashboard markup and layout
+- [`styles.css`](/c:/University/Projects/Climatiq/styles.css): styling, responsive layout, and forecast/scenario presentation
+- [`app.js`](/c:/University/Projects/Climatiq/app.js): state, CSV parsing, emissions math, forecasting, scenarios, charts, and UI rendering
+- [`Samples/`](/c:/University/Projects/Climatiq/Samples): sample CSV files for quick testing
 
-## Current Recommendation Logic
+## Notes
 
-The recommendation cards are dataset-driven, but heuristic-based rather than machine-learned. The app currently looks for:
-
-- electricity-heavy footprints
-- winter gas spikes
-- rising or material travel emissions
-- mixed-source footprints that need a balanced action package
-
-Each recommendation also includes a projected 3-month scenario outcome so it can be compared with the baseline forecast.
+- The dashboard is entirely client-side.
+- Forecasting runs on total emissions first, then allocates projected totals back to categories using recent category shares.
+- Charts are drawn directly with the Canvas API rather than a charting library.

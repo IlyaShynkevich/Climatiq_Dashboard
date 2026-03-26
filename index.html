@@ -135,18 +135,41 @@
       <section class="panel panel-forecast">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">Predictions</p>
-            <h2>Projected next quarter</h2>
+            <p class="eyebrow">Model Selection</p>
+            <h2>Forecast benchmark and selected outlook</h2>
           </div>
         </div>
         <div class="forecast-summary">
           <article class="forecast-highlight">
-            <p>Projected 3-month total</p>
-            <strong id="forecastTotal">0 kg CO2e</strong>
-            <span id="forecastConfidence">Add at least two months to generate a forecast.</span>
+            <p>Selected model</p>
+            <strong id="forecastModel">--</strong>
+            <span id="forecastReason">Add more dated months to compare models.</span>
           </article>
-          <div class="forecast-list" id="forecastList"></div>
+          <article class="forecast-highlight forecast-highlight-secondary">
+            <p>Projected 3-month total</p>
+            <strong id="forecastTotal">--</strong>
+            <span id="forecastConfidence">Add at least six dated months to compare models.</span>
+          </article>
         </div>
+        <div class="forecast-benchmark">
+          <div class="forecast-table-wrap">
+            <table class="forecast-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>RMSE</th>
+                  <th>MAE</th>
+                  <th>MAPE</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="forecastTableBody"></tbody>
+            </table>
+          </div>
+          <div class="forecast-narrative" id="forecastNarrative"></div>
+        </div>
+        <div class="forecast-list" id="forecastList"></div>
+        <p class="forecast-note" id="forecastNote"></p>
       </section>
 
       <section class="panel panel-scenarios">

@@ -1,3 +1,4 @@
+// Fixed activity-to-emissions factors used everywhere in the dashboard.
 const EMISSION_FACTORS = {
   electricity: 0.4,
   gas: 5.3,
@@ -8,10 +9,12 @@ const defaultRows = [
   { month: "", electricity: 0, gas: 0, travel: 0 },
 ];
 
+// Keep mutable dashboard data in one place so every render pass derives from the same source.
 const state = {
   rows: [...defaultRows],
 };
 
+// Cache the DOM nodes once; the render functions update these references in place.
 const rowTemplate = document.getElementById("rowTemplate");
 const dataRows = document.getElementById("dataRows");
 const scenarioGrid = document.getElementById("scenarioGrid");
@@ -25,15 +28,24 @@ const averageEl = document.getElementById("averageMonthly");
 const topCategoryEl = document.getElementById("topCategory");
 const annualTotalEl = document.getElementById("annualTotal");
 const bestMonthEl = document.getElementById("bestMonth");
+const forecastModelEl = document.getElementById("forecastModel");
+const forecastReasonEl = document.getElementById("forecastReason");
 const forecastTotalEl = document.getElementById("forecastTotal");
 const forecastConfidenceEl = document.getElementById("forecastConfidence");
+const forecastTableBodyEl = document.getElementById("forecastTableBody");
+const forecastNarrativeEl = document.getElementById("forecastNarrative");
 const forecastListEl = document.getElementById("forecastList");
+const forecastNoteEl = document.getElementById("forecastNote");
 
 const trendCanvas = document.getElementById("trendChart");
 const categoryCanvas = document.getElementById("categoryChart");
 
 function formatKg(value) {
   return `${Math.round(value).toLocaleString()} kg CO2e`;
+}
+
+function formatKgOrPlaceholder(value) {
+  return Number.isFinite(value) ? formatKg(value) : "--";
 }
 
 function setImportStatus(message, type = "") {
@@ -109,6 +121,7 @@ function clampReduction(value) {
   return Math.min(100, Math.max(0, Number(value) || 0));
 }
 
+// CSV import stays strict so downstream calculations only run on predictable, validated rows.
 function parseCsv(text) {
   const lines = text
     .split(/\r?\n/)
@@ -197,41 +210,11 @@ function getPredictionInputs(rows, field) {
   };
 }
 
-function generateForecastRows(rows, horizon = 3) {
-  const datedRows = rows
-    .filter((row) => row.month)
-    .sort((a, b) => a.month.localeCompare(b.month));
-
-  if (datedRows.length === 0) {
-    return [];
-  }
-
-  const baseMonth = datedRows[datedRows.length - 1].month;
-  const electricityInput = getPredictionInputs(datedRows, "electricity");
-  const gasInput = getPredictionInputs(datedRows, "gas");
-  const travelInput = getPredictionInputs(datedRows, "travel");
-
-  return Array.from({ length: horizon }, (_, index) => {
-    const step = index + 1;
-    const month = addMonths(baseMonth, step);
-    const electricity = Math.max(0, electricityInput.latestValue + electricityInput.averageDelta * step);
-    const gas = Math.max(0, gasInput.latestValue + gasInput.averageDelta * step);
-    const travel = Math.max(0, travelInput.latestValue + travelInput.averageDelta * step);
-    const normalizedRow = {
-      month,
-      electricity: electricityInput.averageValue > 0 ? electricity : 0,
-      gas: gasInput.averageValue > 0 ? gas : 0,
-      travel: travelInput.averageValue > 0 ? travel : 0,
-    };
-    const breakdown = calculateRowEmissions(normalizedRow);
-    return {
-      ...normalizedRow,
-      breakdown,
-      total: breakdown.electricity + breakdown.gas + breakdown.travel,
-    };
-  });
+function average(values) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
 
+// Forecasting works on total emissions first, then reapportions the totals back to categories.
 function applyScenarioToBreakdown(breakdown, scenario) {
   return {
     electricity: breakdown.electricity * (1 - clampReduction(scenario.electricityReduction) / 100),
@@ -251,14 +234,444 @@ function buildScenarioForecast(forecastRows, scenario) {
   });
 }
 
-function average(values) {
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-}
-
 function getCategoryShare(value, total) {
   return total > 0 ? value / total : 0;
 }
 
+function getMonthNumber(rawMonth) {
+  return Number((rawMonth || "").split("-")[1]);
+}
+
+function formatMetric(value, digits = 1) {
+  return Number.isFinite(value) ? value.toFixed(digits) : "--";
+}
+
+function calculateRmse(actuals, predictions) {
+  if (!actuals.length || actuals.length !== predictions.length) return Number.NaN;
+  const mse = actuals.reduce((sum, actual, index) => {
+    const error = actual - predictions[index];
+    return sum + error * error;
+  }, 0) / actuals.length;
+  return Math.sqrt(mse);
+}
+
+function calculateMae(actuals, predictions) {
+  if (!actuals.length || actuals.length !== predictions.length) return Number.NaN;
+  return actuals.reduce((sum, actual, index) => sum + Math.abs(actual - predictions[index]), 0) / actuals.length;
+}
+
+function calculateMape(actuals, predictions) {
+  const safePairs = actuals.filter((actual) => Math.abs(actual) > 0.001);
+  if (!safePairs.length || actuals.length !== predictions.length) return Number.NaN;
+  const total = actuals.reduce((sum, actual, index) => {
+    if (Math.abs(actual) <= 0.001) return sum;
+    return sum + Math.abs((actual - predictions[index]) / actual);
+  }, 0);
+  return (total / safePairs.length) * 100;
+}
+
+function createMeanModel(trainValues) {
+  const meanValue = average(trainValues);
+  return {
+    forecast(horizon) {
+      return Array.from({ length: horizon }, () => meanValue);
+    },
+  };
+}
+
+function createNaiveModel(trainValues) {
+  const lastValue = trainValues[trainValues.length - 1] || 0;
+  return {
+    forecast(horizon) {
+      return Array.from({ length: horizon }, () => lastValue);
+    },
+  };
+}
+
+function createSeasonalNaiveModel(trainValues, seasonLength = 12) {
+  return {
+    forecast(horizon) {
+      return Array.from({ length: horizon }, (_, index) => {
+        const sourceIndex = trainValues.length - seasonLength + (index % seasonLength);
+        return Math.max(0, trainValues[sourceIndex] || trainValues[trainValues.length - 1] || 0);
+      });
+    },
+  };
+}
+
+// Estimate additive month-of-year effects by comparing each month against its season average.
+function initializeSeasonals(values, seasonLength) {
+  const seasonals = new Array(seasonLength).fill(0);
+  const seasonCount = Math.floor(values.length / seasonLength);
+  if (seasonCount < 2) return seasonals;
+  const seasonAverages = Array.from({ length: seasonCount }, (_, seasonIndex) => {
+    const start = seasonIndex * seasonLength;
+    return average(values.slice(start, start + seasonLength));
+  });
+
+  for (let season = 0; season < seasonLength; season += 1) {
+    let total = 0;
+    let count = 0;
+    for (let seasonIndex = 0; seasonIndex < seasonCount; seasonIndex += 1) {
+      const value = values[seasonIndex * seasonLength + season];
+      if (!Number.isFinite(value)) continue;
+      total += value - seasonAverages[seasonIndex];
+      count += 1;
+    }
+    seasonals[season] = count ? total / count : 0;
+  }
+  return seasonals;
+}
+
+function runHoltWinters(values, seasonLength, alpha, beta, gamma) {
+  if (values.length < seasonLength * 2) return null;
+  const seasonals = initializeSeasonals(values, seasonLength);
+  let level = average(values.slice(0, seasonLength));
+  let trend = (average(values.slice(seasonLength, seasonLength * 2)) - average(values.slice(0, seasonLength))) / seasonLength;
+  let sse = 0;
+
+  for (let index = seasonLength; index < values.length; index += 1) {
+    const seasonalIndex = index % seasonLength;
+    const actual = values[index];
+    const prediction = level + trend + seasonals[seasonalIndex];
+    const previousLevel = level;
+    sse += (actual - prediction) * (actual - prediction);
+    level = alpha * (actual - seasonals[seasonalIndex]) + (1 - alpha) * (level + trend);
+    trend = beta * (level - previousLevel) + (1 - beta) * trend;
+    seasonals[seasonalIndex] = gamma * (actual - level) + (1 - gamma) * seasonals[seasonalIndex];
+  }
+
+  return { level, trend, seasonals, sse };
+}
+
+function createHoltWintersModel(trainValues, seasonLength = 12) {
+  const parameterGrid = [0.2, 0.4, 0.6, 0.8];
+  let bestFit = null;
+
+  parameterGrid.forEach((alpha) => {
+    parameterGrid.forEach((beta) => {
+      parameterGrid.forEach((gamma) => {
+        const fit = runHoltWinters(trainValues, seasonLength, alpha, beta, gamma);
+        if (!fit) return;
+        if (!bestFit || fit.sse < bestFit.sse) {
+          bestFit = { ...fit, alpha, beta, gamma };
+        }
+      });
+    });
+  });
+
+  if (!bestFit) return null;
+
+  return {
+    forecast(horizon) {
+      return Array.from({ length: horizon }, (_, index) => {
+        const step = index + 1;
+        const seasonal = bestFit.seasonals[(trainValues.length + index) % seasonLength] || 0;
+        return Math.max(0, bestFit.level + bestFit.trend * step + seasonal);
+      });
+    },
+  };
+}
+
+function createProphetStyleModel(trainValues, trainMonths, seasonLength = 12) {
+  if (trainValues.length < seasonLength) return null;
+  const indices = trainValues.map((_, index) => index);
+  const xMean = average(indices);
+  const yMean = average(trainValues);
+  const numerator = trainValues.reduce((sum, value, index) => sum + (index - xMean) * (value - yMean), 0);
+  const denominator = trainValues.reduce((sum, _, index) => sum + (index - xMean) ** 2, 0);
+  const slope = denominator ? numerator / denominator : 0;
+  const intercept = yMean - slope * xMean;
+  const residualsByMonth = Array.from({ length: seasonLength }, () => []);
+
+  trainValues.forEach((value, index) => {
+    const trendValue = intercept + slope * index;
+    const monthIndex = (getMonthNumber(trainMonths[index]) || 1) - 1;
+    residualsByMonth[monthIndex].push(value - trendValue);
+  });
+
+  const seasonalAdjustments = residualsByMonth.map((values) => average(values));
+
+  return {
+    forecast(horizon, forecastMonths = []) {
+      return Array.from({ length: horizon }, (_, index) => {
+        const overallIndex = trainValues.length + index;
+        const fallbackMonthIndex = overallIndex % seasonLength;
+        const monthIndex = forecastMonths[index] ? (getMonthNumber(forecastMonths[index]) || 1) - 1 : fallbackMonthIndex;
+        return Math.max(0, intercept + slope * overallIndex + (seasonalAdjustments[monthIndex] || 0));
+      });
+    },
+  };
+}
+
+function getForecastMonthKeys(lastMonth, horizon) {
+  return Array.from({ length: horizon }, (_, index) => addMonths(lastMonth, index + 1));
+}
+
+function getRecentCategoryShares(computedRows) {
+  const recentRows = computedRows.filter((row) => row.month).slice(-6);
+  const totals = sumCategories(recentRows);
+  const total = totals.electricity + totals.gas + totals.travel;
+  if (total <= 0) {
+    return { electricity: 1 / 3, gas: 1 / 3, travel: 1 / 3 };
+  }
+  return {
+    electricity: totals.electricity / total,
+    gas: totals.gas / total,
+    travel: totals.travel / total,
+  };
+}
+
+function buildForecastRowsFromTotals(computedRows, forecastTotals, forecastMonths) {
+  const shares = getRecentCategoryShares(computedRows);
+  return forecastTotals.map((total, index) => {
+    const safeTotal = Math.max(0, total);
+    const breakdown = {
+      electricity: safeTotal * shares.electricity,
+      gas: safeTotal * shares.gas,
+      travel: safeTotal * shares.travel,
+    };
+    return {
+      month: forecastMonths[index],
+      breakdown,
+      total: safeTotal,
+    };
+  });
+}
+
+function getModelDefinitions() {
+  return [
+    {
+      key: "mean",
+      label: "Mean",
+      minimumLength: 2,
+      build: (trainValues) => createMeanModel(trainValues),
+    },
+    {
+      key: "naive",
+      label: "Naive",
+      minimumLength: 2,
+      build: (trainValues) => createNaiveModel(trainValues),
+    },
+    {
+      key: "seasonal-naive",
+      label: "Seasonal naive",
+      minimumLength: 12,
+      build: (trainValues) => createSeasonalNaiveModel(trainValues, 12),
+    },
+    {
+      key: "holt-winters",
+      label: "Holt-Winters",
+      minimumLength: 24,
+      build: (trainValues) => createHoltWintersModel(trainValues, 12),
+    },
+    {
+      key: "prophet-style",
+      label: "Prophet-style",
+      minimumLength: 12,
+      build: (trainValues, trainMonths) => createProphetStyleModel(trainValues, trainMonths, 12),
+    },
+  ];
+}
+
+// Backtest one step ahead at each point in history so model selection mirrors real usage.
+function evaluateModelWithRollingOrigin(definition, values, months) {
+  const predictions = [];
+  const actuals = [];
+
+  for (let targetIndex = definition.minimumLength; targetIndex < values.length; targetIndex += 1) {
+    const trainValues = values.slice(0, targetIndex);
+    const trainMonths = months.slice(0, targetIndex);
+    const targetMonth = months[targetIndex];
+    const model = definition.build(trainValues, trainMonths);
+    if (!model) continue;
+    const prediction = model.forecast(1, [targetMonth])[0];
+    if (!Number.isFinite(prediction)) continue;
+    predictions.push(prediction);
+    actuals.push(values[targetIndex]);
+  }
+
+  if (predictions.length === 0) {
+    return {
+      key: definition.key,
+      label: definition.label,
+      available: false,
+      rmse: Number.NaN,
+      mae: Number.NaN,
+      mape: Number.NaN,
+      evaluationPoints: 0,
+      reason: `Needs more than ${definition.minimumLength} total months for backtesting.`,
+    };
+  }
+
+  return {
+    key: definition.key,
+    label: definition.label,
+    available: true,
+    rmse: calculateRmse(actuals, predictions),
+    mae: calculateMae(actuals, predictions),
+    mape: calculateMape(actuals, predictions),
+    evaluationPoints: predictions.length,
+    predictions,
+  };
+}
+
+function evaluateForecastModels(computedRows) {
+  const datedRows = computedRows.filter((row) => row.month).sort((a, b) => a.month.localeCompare(b.month));
+  const values = datedRows.map((row) => row.total);
+  const months = datedRows.map((row) => row.month);
+
+  // Forecasts stay locked until there is enough history to support either seasonality or benchmarking.
+  if (datedRows.length < 12) {
+    return {
+      holdoutLength: 0,
+      rows: getModelDefinitions().map((definition) => ({
+        key: definition.key,
+        label: definition.label,
+        available: false,
+        rmse: Number.NaN,
+        mae: Number.NaN,
+        mape: Number.NaN,
+        evaluationPoints: 0,
+        reason: "Need at least 12 total months before a useful forecast can be produced.",
+      })),
+      selected: null,
+      forecastRows: [],
+      forecastTotals: [],
+      forecastMonths: [],
+      availableCount: 0,
+      totalMonths: datedRows.length,
+      evaluationWindowLabel: "",
+    };
+  }
+
+  if (datedRows.length < 24) {
+    // With one full year available, repeat the prior season rather than pretending we can benchmark reliably.
+    const forecastMonths = getForecastMonthKeys(months[months.length - 1], 3);
+    const fallbackModel = createSeasonalNaiveModel(values, 12);
+    const forecastTotals = fallbackModel.forecast(3, forecastMonths);
+    const forecastRows = buildForecastRowsFromTotals(datedRows, forecastTotals, forecastMonths);
+    return {
+      holdoutLength: 0,
+      rows: getModelDefinitions().map((definition) => ({
+        key: definition.key,
+        label: definition.label,
+        available: false,
+        rmse: Number.NaN,
+        mae: Number.NaN,
+        mape: Number.NaN,
+        evaluationPoints: 0,
+        reason: definition.key === "seasonal-naive"
+          ? "Using seasonal naive as a short-history fallback because one full year is available."
+          : "Benchmark locked until 24 months are available.",
+      })),
+      selected: {
+        key: "seasonal-naive",
+        label: "Seasonal naive",
+        fallback: true,
+      },
+      forecastRows,
+      forecastTotals,
+      forecastMonths,
+      availableCount: 0,
+      totalMonths: datedRows.length,
+      evaluationWindowLabel: "Short-history fallback",
+    };
+  }
+
+  const modelRows = getModelDefinitions().map((definition) => evaluateModelWithRollingOrigin(definition, values, months));
+
+  const availableRows = modelRows.filter((row) => row.available && Number.isFinite(row.rmse));
+  const selected = [...availableRows].sort((a, b) => {
+    if (a.rmse !== b.rmse) return a.rmse - b.rmse;
+    if (a.mae !== b.mae) return a.mae - b.mae;
+    return a.label.localeCompare(b.label);
+  })[0] || null;
+
+  if (!selected) {
+    return {
+      holdoutLength: 0,
+      rows: modelRows,
+      selected: null,
+      forecastRows: [],
+      forecastTotals: [],
+      forecastMonths: [],
+      availableCount: availableRows.length,
+      totalMonths: datedRows.length,
+      evaluationWindowLabel: "",
+    };
+  }
+
+  const fullValues = values;
+  const fullMonths = months;
+  const fullModelDefinition = getModelDefinitions().find((model) => model.key === selected.key);
+  const fullModel = fullModelDefinition?.build(fullValues, fullMonths);
+  const forecastMonths = getForecastMonthKeys(months[months.length - 1], 3);
+  const forecastTotals = fullModel ? fullModel.forecast(3, forecastMonths) : [];
+  const forecastRows = buildForecastRowsFromTotals(datedRows, forecastTotals, forecastMonths);
+  const evaluationWindowLabel = selected.evaluationPoints === 1
+    ? "1 rolling validation month"
+    : `${selected.evaluationPoints} rolling validation months`;
+
+  return {
+    holdoutLength: selected.evaluationPoints,
+    rows: modelRows,
+    selected,
+    forecastRows,
+    forecastTotals,
+    forecastMonths,
+    availableCount: availableRows.length,
+    totalMonths: datedRows.length,
+    evaluationWindowLabel,
+  };
+}
+
+function describeSelectedModel(modelKey) {
+  if (modelKey === "mean") return "The simple average won, which suggests the series is fairly stable and more complex structure did not add value.";
+  if (modelKey === "naive") return "The last observed value won, which suggests the most recent month is the strongest guide for the next period.";
+  if (modelKey === "seasonal-naive") return "Seasonal naive won, which suggests repeating the same month from the prior year is the clearest signal in the data.";
+  if (modelKey === "holt-winters") return "Holt-Winters won, which suggests both trend and recurring seasonal movement matter in this dataset.";
+  if (modelKey === "prophet-style") return "The Prophet-style model won, which suggests a decomposed trend plus month-of-year seasonality fits best.";
+  return "No model could be selected from the current dataset.";
+}
+
+function buildNarrativeSentences(evaluation) {
+  if (!evaluation.selected) {
+    return [
+      "The dashboard needs at least 12 dated months before it can produce a useful forecast.",
+      "With less than a year of history, seasonality cannot be inferred in a defensible way.",
+      "That means neither baseline nor seasonal models can be judged properly.",
+      "Any number shown earlier would be weak evidence for an operational forecast.",
+      "Load at least 12 dated months to unlock a short-history forecast, or 24 months for the full benchmark.",
+    ];
+  }
+
+  if (evaluation.selected.fallback) {
+    return [
+      "The dataset spans one year, so the dashboard uses a short-history fallback instead of a fully benchmarked winner.",
+      "Seasonal naive was chosen as the fallback because it repeats the same months from the most recent year.",
+      "That usually gives more realistic month-to-month variation than mean or naive on a 12-month dataset.",
+      "RMSE, MAE, and MAPE stay locked until at least 24 months are available for a fair rolling comparison.",
+      "Load a second year of data to unlock the full benchmark and validate the selected model properly.",
+    ];
+  }
+
+  const holdoutText = evaluation.holdoutLength === 12
+    ? "We compared each model over 12 rolling validation months."
+    : `We compared each model over ${evaluation.holdoutLength} rolling validation month${evaluation.holdoutLength === 1 ? "" : "s"}.`;
+  const bestRmse = formatMetric(evaluation.selected.rmse);
+  const bestMae = formatMetric(evaluation.selected.mae);
+  const mapeText = Number.isFinite(evaluation.selected.mape) ? `${formatMetric(evaluation.selected.mape)}%` : "not reliable because some actual months are near zero";
+  return [
+    holdoutText,
+    "The benchmark starts with mean, naive, and seasonal naive so complex models must beat simple baselines to be justified.",
+    `The selected model is ${evaluation.selected.label} because it achieved the lowest RMSE (${bestRmse}) and a low MAE (${bestMae}) across the rolling validation window.`,
+    `Its MAPE is ${mapeText}.`,
+    describeSelectedModel(evaluation.selected.key),
+  ];
+}
+
+// Recommendations are heuristic-based: summarize the footprint, then look for dominance, growth, and winter effects.
 function analyzeDataset(computedRows) {
   const datedRows = computedRows.filter((row) => row.month).sort((a, b) => a.month.localeCompare(b.month));
   const totals = sumCategories(datedRows);
@@ -368,12 +781,13 @@ function createRecommendedScenarios(computedRows) {
 }
 
 function describeForecastConfidence(rowCount) {
-  if (rowCount >= 12) return "Forecast uses the last 6 months of directional change. Confidence: medium.";
-  if (rowCount >= 6) return "Forecast uses recent monthly trend, but the history window is still short. Confidence: low-medium.";
-  if (rowCount >= 2) return "Forecast is directional only because the dataset is limited. Confidence: low.";
-  return "Add at least two months to generate a forecast.";
+  if (rowCount >= 24) return "The winner was validated over a rolling window and then refit on the full history. Confidence: medium.";
+  if (rowCount >= 12) return "Using a short-history seasonal fallback because only one full year is available. Confidence: low-medium.";
+  if (rowCount >= 1) return "Forecast unavailable until at least 12 months are available. Confidence: insufficient data.";
+  return "Add at least 12 dated months to forecast.";
 }
 
+// Rendering stays fully derived from state; computed totals never get written back into the source rows.
 function renderRows(computedRows = getComputedRows()) {
   dataRows.innerHTML = "";
 
@@ -479,6 +893,7 @@ function drawAxes(ctx, width, height, padding) {
   ctx.stroke();
 }
 
+// Charts are drawn directly on canvas so the project stays dependency-free.
 function drawTrendChart(computedRows) {
   const { ctx, width, height } = prepareCanvas(trendCanvas);
   const padding = {
@@ -557,6 +972,7 @@ function drawTrendChart(computedRows) {
     ctx.fillText(formatMonthShort(row.month), x, height - 52);
   });
 
+  // Group contiguous months by year so multi-year datasets remain readable on the x-axis.
   const yearSegments = [];
   computedRows.forEach((row, index) => {
     const year = row.month ? row.month.split("-")[0] : "";
@@ -631,9 +1047,11 @@ function drawCategoryChart(computedRows) {
   });
 }
 
+// Scenario cards compare current savings now and projected savings against the selected forecast baseline.
 function renderScenarios(computedRows, forecastRows = []) {
   const totals = sumCategories(computedRows);
   const baselineTotal = totals.electricity + totals.gas + totals.travel;
+  const hasForecast = forecastRows.length > 0;
   const baselineForecastTotal = forecastRows.reduce((sum, row) => sum + row.total, 0);
   const recommendedScenarios = createRecommendedScenarios(computedRows);
   scenarioGrid.innerHTML = "";
@@ -678,10 +1096,14 @@ function renderScenarios(computedRows, forecastRows = []) {
         <p class="scenario-metric">${Math.round(currentSavings).toLocaleString()} kg</p>
         <p>${Math.round((currentSavings / Math.max(baselineTotal, 1)) * 100)}% reduction vs current baseline</p>
       </div>
-      <p class="scenario-case-study">Projected quarter impact: ${Math.round(forecastSavings).toLocaleString()} kg below the baseline forecast.</p>
+      <p class="scenario-case-study">${hasForecast
+        ? `Projected quarter impact: ${Math.round(forecastSavings).toLocaleString()} kg below the baseline forecast.`
+        : "Projected quarter impact: unavailable until the forecast benchmark is unlocked."}</p>
       <div class="scenario-meta">
         <span class="scenario-total">Current total: ${Math.round(currentScenarioTotal).toLocaleString()} kg</span>
-        <span class="scenario-total">Projected 3-month total: ${Math.round(scenarioForecastTotal).toLocaleString()} kg</span>
+        <span class="scenario-total">${hasForecast
+          ? `Projected 3-month total: ${Math.round(scenarioForecastTotal).toLocaleString()} kg`
+          : "Projected 3-month total: --"}</span>
       </div>
       <ul class="scenario-points">
         <li>Electricity cut: ${scenario.electricityReduction}%</li>
@@ -694,28 +1116,84 @@ function renderScenarios(computedRows, forecastRows = []) {
   });
 }
 
+// One evaluation pass powers the model table, narrative copy, confidence text, and forecast cards.
 function renderForecast(computedRows) {
-  const validRows = computedRows.filter((row) => row.month);
-  const forecastRows = validRows.length >= 2 ? generateForecastRows(state.rows, 3) : [];
-  const forecastTotal = forecastRows.reduce((sum, row) => sum + row.total, 0);
+  const evaluation = evaluateForecastModels(computedRows);
+  const narrativeSentences = buildNarrativeSentences(evaluation);
+  const forecastTotal = evaluation.forecastRows.length
+    ? evaluation.forecastRows.reduce((sum, row) => sum + row.total, 0)
+    : Number.NaN;
 
-  forecastTotalEl.textContent = formatKg(forecastTotal);
-  forecastConfidenceEl.textContent = describeForecastConfidence(validRows.length);
+  forecastModelEl.textContent = evaluation.selected?.label || "--";
+  forecastReasonEl.textContent = evaluation.selected
+    ? evaluation.selected.fallback
+      ? "Using the last full year as a seasonal fallback because there is not enough history for a full benchmark."
+      : describeSelectedModel(evaluation.selected.key)
+    : "At least 12 dated months are required before the dashboard can forecast.";
+  forecastTotalEl.textContent = formatKgOrPlaceholder(forecastTotal);
+  forecastConfidenceEl.textContent = describeForecastConfidence(evaluation.totalMonths);
+  forecastTableBodyEl.innerHTML = "";
+  forecastNarrativeEl.innerHTML = narrativeSentences.map((sentence) => `<p>${sentence}</p>`).join("");
   forecastListEl.innerHTML = "";
+  forecastNoteEl.textContent = evaluation.holdoutLength === 12
+    ? "Validation window: 12 rolling one-step forecasts. MAPE is shown for reference and becomes less reliable when actual emissions are near zero."
+    : evaluation.holdoutLength > 0
+      ? `Validation window: ${evaluation.holdoutLength} rolling one-step forecast${evaluation.holdoutLength === 1 ? "" : "s"}. If only mean and naive are available, flat next-quarter values are expected because both models produce constant forecasts by design.`
+      : evaluation.selected?.fallback
+        ? `Current history: ${evaluation.totalMonths} months. Forecast is produced with a seasonal fallback. Load at least 24 dated months to unlock the full benchmark and error table.`
+        : evaluation.totalMonths >= 1
+          ? `Current history: ${evaluation.totalMonths} month${evaluation.totalMonths === 1 ? "" : "s"}. Load at least 12 dated months to forecast, or 24 months to unlock the full benchmark.`
+          : "Load at least 12 dated months to forecast.";
 
-  if (forecastRows.length === 0) {
+  if (evaluation.rows.length === 0) {
+    const emptyRow = document.createElement("tr");
+    emptyRow.innerHTML = `
+      <td>--</td>
+      <td>--</td>
+      <td>--</td>
+      <td>--</td>
+      <td><span class="forecast-status is-unavailable">Waiting</span></td>
+    `;
+    forecastTableBodyEl.appendChild(emptyRow);
+  } else {
+    evaluation.rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      if (evaluation.selected && row.key === evaluation.selected.key) {
+        tr.className = "is-selected";
+      }
+      const isFallbackSelected = evaluation.selected?.fallback && row.key === evaluation.selected.key;
+      const statusClass = !row.available
+        ? (isFallbackSelected ? "forecast-status is-selected" : "forecast-status is-unavailable")
+        : evaluation.selected && row.key === evaluation.selected.key
+          ? "forecast-status is-selected"
+          : "forecast-status";
+      const statusLabel = !row.available
+        ? isFallbackSelected ? "Fallback" : "Waiting"
+        : evaluation.selected && row.key === evaluation.selected.key ? "Selected" : "Compared";
+      tr.innerHTML = `
+        <td>${row.label}</td>
+        <td>${formatMetric(row.rmse)}</td>
+        <td>${formatMetric(row.mae)}</td>
+        <td>${Number.isFinite(row.mape) ? `${formatMetric(row.mape)}%` : "--"}</td>
+        <td><span class="${statusClass}">${statusLabel}</span></td>
+      `;
+      forecastTableBodyEl.appendChild(tr);
+    });
+  }
+
+  if (evaluation.forecastRows.length === 0) {
     const emptyCard = document.createElement("article");
     emptyCard.className = "forecast-card";
     emptyCard.innerHTML = `
       <p>Forecast unavailable</p>
       <strong>--</strong>
-      <span>Enter at least two dated months to project the next quarter.</span>
+      <span>Enter at least 12 dated months to project the next quarter.</span>
     `;
     forecastListEl.appendChild(emptyCard);
-    return;
+    return [];
   }
 
-  forecastRows.forEach((row) => {
+  evaluation.forecastRows.forEach((row) => {
     const card = document.createElement("article");
     card.className = "forecast-card";
     card.innerHTML = `
@@ -726,9 +1204,10 @@ function renderForecast(computedRows) {
     forecastListEl.appendChild(card);
   });
 
-  return forecastRows;
+  return evaluation.forecastRows;
 }
 
+// Recompute the full dashboard after any state change so every panel stays synchronized.
 function updateDashboard() {
   const computedRows = getComputedRows();
   const sortedRows = [...computedRows].sort((a, b) => a.month.localeCompare(b.month));
@@ -746,6 +1225,7 @@ function render() {
   updateDashboard();
 }
 
+// Wire up the UI after all helpers are defined so startup order stays obvious.
 fileInput.addEventListener("change", async (event) => {
   const [file] = event.target.files;
   if (!file) return;
