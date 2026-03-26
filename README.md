@@ -34,7 +34,7 @@ Each recommendation applies category-specific reduction percentages and compares
 
 ## Emission Factors
 
-The current conversion factors in [`app.js`](/c:/University/Projects/Climatiq/app.js) are:
+The current conversion factors in [`app.js`](./app.js) are:
 
 - Electricity: `0.4 kg CO2e` per `kWh`
 - Gas: `5.3 kg CO2e` per `therm`
@@ -59,7 +59,7 @@ Rules:
 
 ## Sample Data
 
-Example datasets are provided in [`Samples/`](/c:/University/Projects/Climatiq/Samples):
+Example datasets are provided in [`Samples/`](./Samples):
 
 - `sample.csv`
 - `sample_two_years.csv`
@@ -78,7 +78,7 @@ This project has no build step and no package dependencies.
 
 ### Option 1: Open Directly
 
-Open [`index.html`](/c:/University/Projects/Climatiq/index.html) in a browser.
+Open [`index.html`](./index.html) in a browser.
 
 ### Option 2: Use a Local Server
 
@@ -96,10 +96,10 @@ http://localhost:8000
 
 ## Project Structure
 
-- [`index.html`](/c:/University/Projects/Climatiq/index.html): dashboard markup and layout
-- [`styles.css`](/c:/University/Projects/Climatiq/styles.css): styling, responsive layout, and forecast/scenario presentation
-- [`app.js`](/c:/University/Projects/Climatiq/app.js): state, CSV parsing, emissions math, forecasting, scenarios, charts, and UI rendering
-- [`Samples/`](/c:/University/Projects/Climatiq/Samples): sample CSV files for quick testing
+- [`index.html`](./index.html): dashboard markup and layout
+- [`styles.css`](./styles.css): styling, responsive layout, and forecast/scenario presentation
+- [`app.js`](./app.js): state, CSV parsing, emissions math, forecasting, scenarios, charts, and UI rendering
+- [`Samples/`](./Samples): sample CSV files for quick testing
 
 ## Notes
 
