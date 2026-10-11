@@ -2,14 +2,24 @@
 
 Climatiq Dashboard is a static browser app for exploring monthly operational emissions. It converts electricity, gas, and travel activity into `kg CO2e`, visualizes the footprint, benchmarks multiple forecast models, projects the next quarter, and recommends reduction scenarios based on the uploaded dataset.
 
+**Live demo:** <https://climatiq-dashboard.vercel.app/>
+
+The UI is minimal and Apple-style, built on the climatiq.io palette (white, navy `#050564`, blue `#0600f7`, brand purple `#6a35ff`, lavender `#f3efff`, and a salmon accent). It follows the system light/dark mode automatically.
+
 ## What The Dashboard Does
 
 - captures monthly business activity through manual entry or CSV import
 - converts activity into emissions with fixed factors for electricity, gas, and travel
-- summarizes the footprint with KPI cards and two canvas charts
-- benchmarks several forecasting approaches and selects the best available model
-- projects the next 3 months of emissions
-- generates scenario cards with current-baseline savings and forecast-baseline savings
+- summarizes the footprint with four summary tiles: total, monthly average, largest source, and lowest month
+- plots a trend chart with a hover read-out
+- breaks emissions down by source in a horizontal category chart
+- lists the underlying months in a scrollable data table
+- benchmarks several forecasting approaches, selects the best available model, and projects the next 3 months of emissions in the forecast section
+- generates recommended actions with current-baseline savings and forecast-baseline savings
+
+## Charts
+
+The trend chart's x-axis thins its labels automatically: every month, then every 2, 3, or 6 months, then years. Dates never overlap, even with long histories. Use `Samples/sample_two_years.csv` or a longer file to see it.
 
 ## Forecasting Behavior
 
@@ -96,10 +106,14 @@ http://localhost:8000
 
 ## Project Structure
 
-- [`index.html`](./index.html): dashboard markup and layout
-- [`styles.css`](./styles.css): styling, responsive layout, and forecast/scenario presentation
-- [`app.js`](./app.js): state, CSV parsing, emissions math, forecasting, scenarios, charts, and UI rendering
+- [`index.html`](./index.html): dashboard markup and layout, with no favicon or external font dependency
+- [`styles.css`](./styles.css): Climatiq palette as CSS variables, light/dark themes, system font stack, and responsive layout
+- [`app.js`](./app.js): state, CSV parsing, emissions math, forecasting, recommendations, canvas charts (colors read from the CSS variables in `styles.css`), and UI rendering
 - [`Samples/`](./Samples): sample CSV files for quick testing
+
+## Deploy
+
+The dashboard is a static site with no build step. It is deployed on Vercel with Application Preset `Other` and no build command, output directory, or environment variables. Every push to `main` redeploys.
 
 ## Notes
 
