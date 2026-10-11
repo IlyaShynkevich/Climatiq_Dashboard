@@ -26,7 +26,6 @@ const importStatusEl = document.getElementById("importStatus");
 const totalEl = document.getElementById("totalEmissions");
 const averageEl = document.getElementById("averageMonthly");
 const topCategoryEl = document.getElementById("topCategory");
-const annualTotalEl = document.getElementById("annualTotal");
 const bestMonthEl = document.getElementById("bestMonth");
 const forecastModelEl = document.getElementById("forecastModel");
 const forecastReasonEl = document.getElementById("forecastReason");
@@ -863,16 +862,13 @@ function renderSummary(computedRows) {
   totalEl.textContent = formatKg(totalEmissions);
   averageEl.textContent = formatKg(average);
   topCategoryEl.textContent = totalEmissions > 0 ? categoryRanking[0][0] : "--";
-  annualTotalEl.textContent = formatKg(totalEmissions);
-  bestMonthEl.textContent = lowestMonth
-    ? `Lowest month: ${formatMonth(lowestMonth.month)} (${formatKg(lowestMonth.total)})`
-    : "Lowest month: --";
+  bestMonthEl.textContent = lowestMonth ? formatMonth(lowestMonth.month) : "--";
 }
 
 function prepareCanvas(canvas) {
   const rect = canvas.getBoundingClientRect();
   const width = Math.max(rect.width, 320);
-  const height = Math.max(rect.height, 260);
+  const height = Math.max(rect.height, 120);
   const dpr = window.devicePixelRatio || 1;
 
   canvas.width = Math.round(width * dpr);
@@ -883,167 +879,256 @@ function prepareCanvas(canvas) {
   return { ctx, width, height };
 }
 
-function drawAxes(ctx, width, height, padding) {
-  ctx.strokeStyle = "rgba(41, 33, 27, 0.26)";
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(padding, padding);
-  ctx.lineTo(padding, height - padding);
-  ctx.lineTo(width - padding, height - padding);
-  ctx.stroke();
+// Read theme colors from CSS so the canvas charts follow light/dark mode.
+function themeColors() {
+  const css = getComputedStyle(document.documentElement);
+  const get = (name) => css.getPropertyValue(name).trim();
+  return {
+    text: get("--text"),
+    muted: get("--muted"),
+    grid: get("--grid"),
+    surface: get("--surface"),
+    accent: get("--chart"),
+    c1: get("--c-electricity"),
+    c2: get("--c-gas"),
+    c3: get("--c-travel"),
+  };
 }
 
-// Charts are drawn directly on canvas so the project stays dependency-free.
+const FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif';
+const MONTH_STEPS = [1, 2, 3, 6, 12, 24, 36, 60, 120];
+let trendHoverIndex = -1;
+let trendRowsCache = [];
+
+// Pick which x-axis ticks to draw so labels never overlap, whatever the dataset length.
+function buildTrendTicks(ctx, rows, stepX) {
+  const labelFor = (row, withYear) => {
+    const [year, month] = row.month.split("-");
+    const name = formatMonthShort(row.month);
+    return withYear ? `${name} ${year}` : name;
+  };
+  const widest = Math.max(
+    ...rows.map((row) => (row.month ? ctx.measureText(labelFor(row, true)).width : 0)),
+    30,
+  );
+  const minGap = widest + 14;
+  const step = MONTH_STEPS.find((candidate) => candidate * stepX >= minGap) || MONTH_STEPS[MONTH_STEPS.length - 1];
+  const firstYear = Number((rows[0].month || "0-").split("-")[0]);
+
+  const ticks = [];
+  rows.forEach((row, index) => {
+    if (!row.month) return;
+    const [year, month] = row.month.split("-").map(Number);
+    let show;
+    let label;
+    if (step < 12) {
+      show = index === 0 || (month - 1) % step === 0;
+      label = month === 1 || index === 0 ? labelFor(row, true) : labelFor(row, false);
+    } else {
+      show = month === 1 && (year - firstYear) % (step / 12) === 0;
+      label = String(year);
+    }
+    if (show) ticks.push({ index, label });
+  });
+
+  // Drop the first tick if it sits too close to the next one.
+  if (ticks.length > 1 && (ticks[1].index - ticks[0].index) * stepX < minGap * 0.75) ticks.shift();
+  return ticks;
+}
+
 function drawTrendChart(computedRows) {
   const { ctx, width, height } = prepareCanvas(trendCanvas);
-  const padding = {
-    top: 26,
-    right: 18,
-    bottom: 92,
-    left: 56,
-  };
+  const colors = themeColors();
+  const padding = { top: 16, right: 16, bottom: 34, left: 56 };
   ctx.clearRect(0, 0, width, height);
 
-  const maxValue = Math.max(...computedRows.map((row) => row.total), 1);
-  const yTicks = 4;
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  const baseY = height - padding.bottom;
+  const hasData = computedRows.some((row) => row.total > 0);
 
-  ctx.strokeStyle = "rgba(41, 33, 27, 0.26)";
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(padding.left, padding.top);
-  ctx.lineTo(padding.left, height - padding.bottom);
-  ctx.lineTo(width - padding.right, height - padding.bottom);
-  ctx.stroke();
+  const rawMax = Math.max(...computedRows.map((row) => row.total), 1);
+  const yTicks = 4;
+  const roughStep = rawMax / yTicks;
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const niceStep = [1, 2, 2.5, 5, 10].map((m) => m * magnitude).find((candidate) => candidate >= roughStep);
+  const niceMax = niceStep * yTicks;
 
-  ctx.font = '600 13px "Manrope", sans-serif';
-  ctx.fillStyle = "#4d4136";
-
+  ctx.font = `500 12px ${FONT}`;
+  ctx.textAlign = "right";
   for (let tick = 0; tick <= yTicks; tick += 1) {
-    const value = (maxValue / yTicks) * (yTicks - tick);
-    const y = padding.top + (chartHeight / yTicks) * tick;
-    ctx.strokeStyle = "rgba(41, 33, 27, 0.12)";
+    const value = (niceMax / yTicks) * tick;
+    const y = baseY - (chartHeight / yTicks) * tick;
+    ctx.strokeStyle = colors.grid;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(padding.left, y);
-    ctx.lineTo(width - padding.right, y);
+    ctx.moveTo(padding.left, y + 0.5);
+    ctx.lineTo(width - padding.right, y + 0.5);
     ctx.stroke();
-    ctx.textAlign = "right";
-    ctx.fillText(`${Math.round(value)} kg`, padding.left - 10, y + 4);
+    ctx.fillStyle = colors.muted;
+    ctx.fillText(Math.round(value).toLocaleString(), padding.left - 10, y + 4);
   }
 
-  if (computedRows.every((row) => row.total === 0)) {
-    ctx.fillStyle = "#6e6256";
+  if (!hasData) {
+    ctx.fillStyle = colors.muted;
     ctx.textAlign = "center";
-    ctx.font = '600 15px "Manrope", sans-serif';
+    ctx.font = `500 14px ${FONT}`;
     ctx.fillText("Enter monthly data to see the emissions trend.", width / 2, height / 2);
     return;
   }
 
-  const stepX = computedRows.length > 1 ? chartWidth / (computedRows.length - 1) : 0;
+  const count = computedRows.length;
+  const stepX = count > 1 ? chartWidth / (count - 1) : 0;
+  const xAt = (index) => (count > 1 ? padding.left + stepX * index : padding.left + chartWidth / 2);
+  const yAt = (value) => baseY - (value / niceMax) * chartHeight;
 
-  ctx.strokeStyle = "#5b57f2";
-  ctx.lineWidth = 4;
+  // Soft area under the line.
+  const fill = ctx.createLinearGradient(0, padding.top, 0, baseY);
+  fill.addColorStop(0, colors.accent + "33");
+  fill.addColorStop(1, colors.accent + "00");
   ctx.beginPath();
-
   computedRows.forEach((row, index) => {
-    const x = padding.left + stepX * index;
-    const y = height - padding.bottom - (row.total / maxValue) * chartHeight;
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+    if (index === 0) ctx.moveTo(xAt(index), yAt(row.total));
+    else ctx.lineTo(xAt(index), yAt(row.total));
   });
+  ctx.lineTo(xAt(count - 1), baseY);
+  ctx.lineTo(xAt(0), baseY);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
 
+  ctx.strokeStyle = colors.accent;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  computedRows.forEach((row, index) => {
+    if (index === 0) ctx.moveTo(xAt(index), yAt(row.total));
+    else ctx.lineTo(xAt(index), yAt(row.total));
+  });
   ctx.stroke();
 
-  computedRows.forEach((row, index) => {
-    const x = padding.left + stepX * index;
-    const y = height - padding.bottom - (row.total / maxValue) * chartHeight;
-    ctx.fillStyle = "#fffaf3";
-    ctx.strokeStyle = "#5b57f2";
-    ctx.lineWidth = 3;
+  // Dots only when there is room; with long histories the line speaks for itself.
+  if (stepX >= 18 || count === 1) {
+    computedRows.forEach((row, index) => {
+      ctx.fillStyle = colors.surface;
+      ctx.strokeStyle = colors.accent;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(xAt(index), yAt(row.total), 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
+
+  // X axis: thinned labels so dates never collide.
+  ctx.font = `500 12px ${FONT}`;
+  ctx.fillStyle = colors.muted;
+  ctx.textAlign = "center";
+  buildTrendTicks(ctx, computedRows, stepX || chartWidth).forEach((tick) => {
+    const x = xAt(tick.index);
+    ctx.strokeStyle = colors.grid;
     ctx.beginPath();
-    ctx.arc(x, y, 6, 0, Math.PI * 2);
+    ctx.moveTo(x + 0.5, baseY);
+    ctx.lineTo(x + 0.5, baseY + 5);
+    ctx.stroke();
+    const half = ctx.measureText(tick.label).width / 2;
+    const clampedX = Math.min(Math.max(x, padding.left - 20 + half), width - half - 2);
+    ctx.fillText(tick.label, clampedX, baseY + 21);
+  });
+
+  // Hover read-out.
+  if (trendHoverIndex >= 0 && trendHoverIndex < count) {
+    const row = computedRows[trendHoverIndex];
+    const x = xAt(trendHoverIndex);
+    const y = yAt(row.total);
+    ctx.strokeStyle = colors.grid;
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, padding.top);
+    ctx.lineTo(x + 0.5, baseY);
+    ctx.stroke();
+    ctx.fillStyle = colors.accent;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.stroke();
 
-    ctx.fillStyle = "#4d4136";
-    ctx.font = '600 13px "Manrope", sans-serif';
-    ctx.textAlign = "center";
-    ctx.fillText(formatMonthShort(row.month), x, height - 52);
-  });
-
-  // Group contiguous months by year so multi-year datasets remain readable on the x-axis.
-  const yearSegments = [];
-  computedRows.forEach((row, index) => {
-    const year = row.month ? row.month.split("-")[0] : "";
-    if (!yearSegments.length || yearSegments[yearSegments.length - 1].year !== year) {
-      yearSegments.push({ year, start: index, end: index });
-    } else {
-      yearSegments[yearSegments.length - 1].end = index;
-    }
-  });
-
-  yearSegments.forEach((segment) => {
-    const startX = padding.left + stepX * segment.start;
-    const endX = padding.left + stepX * segment.end;
-    const lineY = height - 28;
-    const labelY = height - 8;
-
-    ctx.strokeStyle = "rgba(41, 33, 27, 0.22)";
-    ctx.lineWidth = 1;
+    const title = formatMonth(row.month);
+    const value = `${Math.round(row.total).toLocaleString()} kg CO2e`;
+    ctx.font = `600 12px ${FONT}`;
+    const boxW = Math.max(ctx.measureText(title).width, ctx.measureText(value).width) + 20;
+    const boxH = 44;
+    const boxX = Math.min(Math.max(x - boxW / 2, padding.left), width - padding.right - boxW);
+    const boxY = Math.max(y - boxH - 12, 2);
+    ctx.fillStyle = colors.text;
     ctx.beginPath();
-    ctx.moveTo(startX, lineY);
-    ctx.lineTo(endX, lineY);
-    ctx.stroke();
-
-    ctx.fillStyle = "#4d4136";
-    ctx.font = '700 13px "Manrope", sans-serif';
-    ctx.textAlign = "center";
-    ctx.fillText(segment.year || "--", (startX + endX) / 2, labelY);
-  });
+    ctx.roundRect(boxX, boxY, boxW, boxH, 8);
+    ctx.fill();
+    ctx.fillStyle = colors.surface;
+    ctx.textAlign = "left";
+    ctx.font = `500 11px ${FONT}`;
+    ctx.fillText(title, boxX + 10, boxY + 17);
+    ctx.font = `600 12px ${FONT}`;
+    ctx.fillText(value, boxX + 10, boxY + 33);
+  }
 }
 
 function drawCategoryChart(computedRows) {
   const { ctx, width, height } = prepareCanvas(categoryCanvas);
-  const padding = 56;
+  const colors = themeColors();
   const totals = sumCategories(computedRows);
   const entries = [
-    ["Electricity", totals.electricity, "#5b57f2"],
-    ["Gas", totals.gas, "#1d1cf4"],
-    ["Travel", totals.travel, "#b6b8ff"],
+    ["Electricity", totals.electricity, colors.c1],
+    ["Gas", totals.gas, colors.c2],
+    ["Travel", totals.travel, colors.c3],
   ];
-  const maxValue = Math.max(...entries.map((entry) => entry[1]), 1);
+  const grand = entries.reduce((sum, entry) => sum + entry[1], 0);
 
   ctx.clearRect(0, 0, width, height);
-  drawAxes(ctx, width, height, padding);
 
-  if (entries.every((entry) => entry[1] === 0)) {
-    ctx.fillStyle = "#6e6256";
+  if (grand === 0) {
+    ctx.fillStyle = colors.muted;
     ctx.textAlign = "center";
-    ctx.font = '600 15px "Manrope", sans-serif';
+    ctx.font = `500 14px ${FONT}`;
     ctx.fillText("Category totals will appear once you enter data.", width / 2, height / 2);
     return;
   }
 
-  const chartWidth = width - padding * 2;
-  const slotWidth = chartWidth / entries.length;
-  const barWidth = Math.min(110, Math.max(36, slotWidth * 0.62));
+  // Horizontal bars: one row per category, label left, value right.
+  const labelW = 90;
+  const valueW = 130;
+  const rowH = 44;
+  const barH = 10;
+  const top = Math.max((height - rowH * entries.length) / 2, 8);
+  const trackW = Math.max(width - labelW - valueW - 16, 40);
+  const maxValue = Math.max(...entries.map((entry) => entry[1]), 1);
 
   entries.forEach(([label, value, color], index) => {
-    const slotStart = padding + slotWidth * index;
-    const x = slotStart + (slotWidth - barWidth) / 2;
-    const barHeight = (value / maxValue) * (height - padding * 2);
-    const y = height - padding - barHeight;
+    const y = top + rowH * index + rowH / 2;
+    ctx.font = `500 14px ${FONT}`;
+    ctx.textAlign = "left";
+    ctx.fillStyle = colors.text;
+    ctx.fillText(label, 0, y + 5);
 
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, barWidth, barHeight);
+    ctx.fillStyle = colors.grid;
+    ctx.beginPath();
+    ctx.roundRect(labelW, y - barH / 2, trackW, barH, barH / 2);
+    ctx.fill();
 
-    ctx.fillStyle = "#29211b";
-    ctx.font = '600 13px "Manrope", sans-serif';
-    ctx.textAlign = "center";
-    ctx.fillText(label, x + barWidth / 2, height - 24);
-    ctx.font = '700 13px "Manrope", sans-serif';
-    ctx.fillText(`${Math.round(value)} kg`, x + barWidth / 2, y - 10);
+    const w = Math.max((value / maxValue) * trackW, value > 0 ? barH : 0);
+    if (w > 0) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(labelW, y - barH / 2, w, barH, barH / 2);
+      ctx.fill();
+    }
+
+    ctx.textAlign = "right";
+    ctx.fillStyle = colors.text;
+    ctx.font = `600 14px ${FONT}`;
+    ctx.fillText(`${Math.round(value).toLocaleString()} kg`, width, y + 5);
+    ctx.fillStyle = colors.muted;
+    ctx.font = `500 12px ${FONT}`;
+    ctx.fillText(`${Math.round((value / grand) * 100)}%`, width - 82, y + 5);
   });
 }
 
@@ -1213,6 +1298,7 @@ function updateDashboard() {
   const sortedRows = [...computedRows].sort((a, b) => a.month.localeCompare(b.month));
   updateRowTotals(computedRows);
   renderSummary(sortedRows);
+  trendRowsCache = sortedRows;
   drawTrendChart(sortedRows);
   drawCategoryChart(sortedRows);
   const forecastRows = renderForecast(sortedRows);
@@ -1258,6 +1344,26 @@ clearDataBtn.addEventListener("click", () => {
 });
 
 window.addEventListener("resize", updateDashboard);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", updateDashboard);
+
+trendCanvas.addEventListener("mousemove", (event) => {
+  const rows = trendRowsCache;
+  if (rows.length < 1) return;
+  const rect = trendCanvas.getBoundingClientRect();
+  const left = 56;
+  const chartWidth = rect.width - left - 16;
+  const ratio = (event.clientX - rect.left - left) / chartWidth;
+  const index = Math.round(ratio * (rows.length - 1));
+  const next = Math.min(Math.max(index, 0), rows.length - 1);
+  if (next !== trendHoverIndex) {
+    trendHoverIndex = next;
+    drawTrendChart(rows);
+  }
+});
+trendCanvas.addEventListener("mouseleave", () => {
+  trendHoverIndex = -1;
+  drawTrendChart(trendRowsCache);
+});
 
 setImportStatus("Load a CSV file or enter values manually.");
 render();

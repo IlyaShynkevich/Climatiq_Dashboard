@@ -4,76 +4,62 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Climatiq Dashboard</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="page-shell">
-    <header class="topbar">
-      <div class="brand-lockup">
-        <img class="brand-mark" src="favicon.svg" alt="">
-        <div>
-          <p class="eyebrow">Climatiq-style concept</p>
-          <strong>Climatiq Dashboard</strong>
-        </div>
-      </div>
-      <div class="topbar-meta">
-        <span class="meta-pill">CSV ready</span>
-        <span class="meta-pill">Live scenarios</span>
-      </div>
+  <div class="page">
+    <header class="page-header">
+      <h1>Climatiq</h1>
+      <p>Monthly emissions from electricity, gas and travel.</p>
     </header>
 
-    <header class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">Operational Carbon Intelligence</p>
-        <h1>Measure business activity and turn it into a carbon view you can actually use.</h1>
-        <p class="hero-text">
-          Load monthly electricity, gas, and travel data, review the emissions trend,
-          and compare quick reduction scenarios in one workspace.
-        </p>
-        <div class="hero-pills">
-          <span class="meta-pill">Manual input</span>
-          <span class="meta-pill">CSV import</span>
-          <span class="meta-pill">What-if planning</span>
-        </div>
-      </div>
-      <section class="hero-card" aria-label="Current summary">
-        <p class="card-label">Portfolio emissions</p>
-        <div class="hero-metric" id="annualTotal">0 kg CO2e</div>
-        <p class="card-footnote" id="bestMonth">Lowest month: --</p>
-        <div class="hero-card-grid">
-          <div>
-            <span class="hero-card-label">Input mode</span>
-            <strong>Business activity</strong>
-          </div>
-          <div>
-            <span class="hero-card-label">Coverage</span>
-            <strong>Electricity, gas, travel</strong>
-          </div>
+    <main>
+      <section class="kpis" aria-label="Summary">
+        <article class="kpi">
+          <span class="kpi-label">Total emissions</span>
+          <strong id="totalEmissions">0 kg</strong>
+        </article>
+        <article class="kpi">
+          <span class="kpi-label">Monthly average</span>
+          <strong id="averageMonthly">0 kg</strong>
+        </article>
+        <article class="kpi">
+          <span class="kpi-label">Largest source</span>
+          <strong id="topCategory">--</strong>
+        </article>
+        <article class="kpi">
+          <span class="kpi-label">Lowest month</span>
+          <strong id="bestMonth">--</strong>
+        </article>
+      </section>
+
+      <section class="section">
+        <h2>Emissions over time</h2>
+        <div class="chart-card">
+          <canvas id="trendChart" aria-label="Emissions over time chart"></canvas>
         </div>
       </section>
-    </header>
 
-    <main class="dashboard">
-      <section class="panel panel-inputs">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">Monthly Inputs</p>
-            <h2>Business activity data</h2>
-          </div>
-          <div class="panel-actions">
-            <label class="secondary-button upload-button" for="fileInput">Load CSV</label>
+      <section class="section">
+        <h2>By category</h2>
+        <div class="chart-card">
+          <canvas id="categoryChart" aria-label="Emissions by category chart"></canvas>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Data</h2>
+          <div class="actions">
+            <label class="btn" for="fileInput">Load CSV</label>
             <input id="fileInput" type="file" accept=".csv" hidden>
-            <button id="clearDataBtn" class="secondary-button secondary-button-muted" type="button">Clear data</button>
-            <button id="addMonthBtn" class="secondary-button" type="button">Add month</button>
+            <button id="addMonthBtn" class="btn" type="button">Add month</button>
+            <button id="clearDataBtn" class="btn btn-quiet" type="button">Clear</button>
           </div>
         </div>
-        <p class="import-note">CSV columns: <code>month,electricity,gas,travel</code></p>
+        <p class="hint">CSV columns: <code>month,electricity,gas,travel</code></p>
         <p id="importStatus" class="import-status" aria-live="polite"></p>
-        <div class="table-wrap">
+        <div class="table-wrap data-table-wrap">
           <table>
             <thead>
               <tr>
@@ -81,7 +67,7 @@
                 <th>Electricity (kWh)</th>
                 <th>Gas (therms)</th>
                 <th>Travel (mi)</th>
-                <th>Monthly emissions</th>
+                <th>Emissions</th>
                 <th aria-label="Remove row"></th>
               </tr>
             </thead>
@@ -90,69 +76,23 @@
         </div>
       </section>
 
-      <section class="panel panel-kpis">
-        <article class="stat-card">
-          <p>Total emissions</p>
-          <strong id="totalEmissions">0 kg</strong>
-          <span>Across all entered months</span>
-        </article>
-        <article class="stat-card">
-          <p>Highest source</p>
-          <strong id="topCategory">--</strong>
-          <span>Largest share of current footprint</span>
-        </article>
-        <article class="stat-card">
-          <p>Average per month</p>
-          <strong id="averageMonthly">0 kg</strong>
-          <span>Baseline monthly emissions</span>
-        </article>
-      </section>
-
-      <section class="panel panel-chart">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">Trend</p>
-            <h2>Emissions over time</h2>
-          </div>
-        </div>
-        <div class="chart-card">
-          <canvas id="trendChart" width="900" height="320" aria-label="Emissions over time chart"></canvas>
-        </div>
-      </section>
-
-      <section class="panel panel-chart">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">Mix</p>
-            <h2>Emissions by category</h2>
-          </div>
-        </div>
-        <div class="chart-card">
-          <canvas id="categoryChart" width="900" height="320" aria-label="Emissions by category chart"></canvas>
-        </div>
-      </section>
-
-      <section class="panel panel-forecast">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">Model Selection</p>
-            <h2>Forecast benchmark and selected outlook</h2>
-          </div>
-        </div>
+      <section class="section">
+        <h2>Forecast</h2>
         <div class="forecast-summary">
-          <article class="forecast-highlight">
-            <p>Selected model</p>
+          <article class="card">
+            <span class="kpi-label">Selected model</span>
             <strong id="forecastModel">--</strong>
-            <span id="forecastReason">Add more dated months to compare models.</span>
+            <p id="forecastReason">Add more dated months to compare models.</p>
           </article>
-          <article class="forecast-highlight forecast-highlight-secondary">
-            <p>Projected 3-month total</p>
+          <article class="card">
+            <span class="kpi-label">Next 3 months</span>
             <strong id="forecastTotal">--</strong>
-            <span id="forecastConfidence">Add at least six dated months to compare models.</span>
+            <p id="forecastConfidence">Add at least six dated months to compare models.</p>
           </article>
         </div>
+        <div class="forecast-list" id="forecastList"></div>
         <div class="forecast-benchmark">
-          <div class="forecast-table-wrap">
+          <div class="table-wrap">
             <table class="forecast-table">
               <thead>
                 <tr>
@@ -168,17 +108,11 @@
           </div>
           <div class="forecast-narrative" id="forecastNarrative"></div>
         </div>
-        <div class="forecast-list" id="forecastList"></div>
         <p class="forecast-note" id="forecastNote"></p>
       </section>
 
-      <section class="panel panel-scenarios">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">What-if Scenarios</p>
-            <h2>Recommended actions</h2>
-          </div>
-        </div>
+      <section class="section">
+        <h2>Recommended actions</h2>
         <div class="scenario-grid" id="scenarioGrid"></div>
       </section>
     </main>
@@ -200,7 +134,7 @@
       </td>
       <td class="row-total">0 kg CO2e</td>
       <td>
-        <button class="icon-button remove-row" type="button" aria-label="Remove month">x</button>
+        <button class="icon-button remove-row" type="button" aria-label="Remove month">&times;</button>
       </td>
     </tr>
   </template>
